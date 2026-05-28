@@ -54,9 +54,15 @@ flags.DEFINE_bool('dyndb',
 def float_array_to_int16_bytes(x):
     return np.floor(x * (2**15 - 1)).astype(np.int16).tobytes()
 
+def get_class_name(path: str) -> str:
+    return pathlib.Path(path).parent.name
 
-def load_audio_chunk(path: str, n_signal: int,
-                     sr: int, channels: int = 1) -> Iterable[np.ndarray]:
+def load_audio_chunk(data_config: Tuple[str, int],
+                     n_signal: int,
+                     sr: int,
+                     channels: int = 1) -> Iterable[Tuple[np.ndarray, int]]:
+
+    path, class_id = data_config
 
     _, input_channels = get_audio_channels(path)
     channel_map = range(channels)
@@ -64,10 +70,10 @@ def load_audio_chunk(path: str, n_signal: int,
         channel_map = (math.ceil(channels / input_channels) * list(range(input_channels)))[:channels]
 
     processes = []
-    for i in range(channels): 
+    for i in range(channels):
         process = subprocess.Popen(
             [
-                'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path, 
+                'ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', path,
                 '-ar', str(sr),
                 '-f', 's16le',
                 '-filter_complex', 'channelmap=%d-0'%channel_map[i],
@@ -76,15 +82,21 @@ def load_audio_chunk(path: str, n_signal: int,
             stdout=subprocess.PIPE,
         )
         processes.append(process)
-    
+
     chunk = [p.stdout.read(n_signal * 4) for p in processes]
     while len(chunk[0]) == n_signal * 4:
-        yield b''.join(chunk)
+        yield (
+            b''.join(chunk),
+            class_id
+        )
         chunk = [p.stdout.read(n_signal * 4) for p in processes]
     process.stdout.close()
 
 
-def get_audio_length(path: str) -> float:
+def get_audio_length(data_config: Tuple[str, int]) -> float:
+
+    path, class_id = data_config
+
     process = subprocess.Popen(
         [
             'ffprobe', '-i', path, '-v', 'error', '-show_entries',
@@ -99,7 +111,7 @@ def get_audio_length(path: str) -> float:
         stdout = stdout.decode().split('\n')[1].split('=')[-1]
         length = float(stdout)
         _, channels = get_audio_channels(path)
-        return path, float(length), int(channels)
+        return path, class_id, float(length), int(channels)
     except:
         return None
 
@@ -119,7 +131,7 @@ def get_audio_channels(path: str) -> int:
         channels = int(stdout)
         return path, int(channels)
     except:
-        return None 
+        return None
 
 
 def flatten(iterator: Iterable):
@@ -136,10 +148,10 @@ def get_metadata(audio_samples, channels: int = 1):
     return {'peak': peak_amplitude, 'rms_amplitude': rms_amplitude}
 
 
-def process_audio_array(audio: Tuple[int, bytes],
+def process_audio_array(audio: Tuple[int, Tuple[bytes, int]],
                         env: lmdb.Environment,
                         channels: int = 1) -> int:
-    audio_id, audio_samples = audio
+    audio_id, (audio_samples, class_id) = audio
     buffers = {}
     buffers['waveform'] = AudioExample.AudioBuffer(
         shape=(channels, int(len(audio_samples) / channels)),
@@ -148,7 +160,12 @@ def process_audio_array(audio: Tuple[int, bytes],
         precision=AudioExample.Precision.INT16,
     )
 
-    ae = AudioExample(buffers=buffers)
+    ae = AudioExample(
+        buffers=buffers,
+        metadata={
+            "class_id": str(class_id)
+        }
+    )
     key = f'{audio_id:08d}'
     with env.begin(write=True) as txn:
         txn.put(
@@ -158,10 +175,16 @@ def process_audio_array(audio: Tuple[int, bytes],
     return audio_id
 
 
-def process_audio_file(audio: Tuple[int, Tuple[str, float]],
+def process_audio_file(audio: Tuple[int, Tuple[str, int, float, int]],
                        env: lmdb.Environment) -> int:
-    audio_id, (path, length, channels) = audio
-    ae = AudioExample(metadata={'path': path, 'length': str(length), 'channels': str(channels)})
+    audio_id, (path, class_id, length, channels) = audio
+    ae = AudioExample(
+        metadata={
+            'path': path,
+            "class_id": str(class_id),
+            'length': str(length),
+            'channels': str(channels)
+        })
     key = f'{audio_id:08d}'
     with env.begin(write=True) as txn:
         txn.put(
@@ -242,13 +265,25 @@ def main(argv):
     audios = map(str, audios)
     audios = map(os.path.abspath, audios)
     audios = [*audios]
+
+    class_names = [pathlib.Path(p).parent.name for p in audios]
+
+    label_map = {
+        name: idx
+        for idx, name in enumerate(sorted(set(class_names)))
+    }
+
+    class_ids = [label_map[name] for name in class_names]
+
+    audios_config = list(zip(audios, class_ids))
+
     if len(audios) == 0:
         print("No valid file found in %s. Aborting"%FLAGS.input_path)
 
     if not FLAGS.lazy:
 
         # load chunks
-        chunks = flatmap(pool, chunk_load, audios)
+        chunks = flatmap(pool, chunk_load, audios_config)
         chunks = enumerate(chunks)
 
         processed_samples = map(partial(process_audio_array, env=env, channels=FLAGS.channels), chunks)
@@ -261,7 +296,7 @@ def main(argv):
                 f'dataset length: {timedelta(seconds=n_seconds)}')
         pbar.close()
     else:
-        audio_lengths = pool.imap_unordered(get_audio_length, audios)
+        audio_lengths = pool.imap_unordered(get_audio_length, audios_config)
         audio_lengths = filter(lambda x: x is not None, audio_lengths)
         audio_lengths = enumerate(audio_lengths)
         processed_samples = map(partial(process_audio_file, env=env),
@@ -278,10 +313,16 @@ def main(argv):
             FLAGS.output_path,
             'metadata.yaml',
     ), 'w') as metadata:
-        yaml.safe_dump({'lazy': FLAGS.lazy, 'channels': FLAGS.channels, 'n_seconds': n_seconds, 'sr': FLAGS.sampling_rate}, metadata)
+        yaml.safe_dump(
+            {
+                'lazy': FLAGS.lazy,
+                'channels': FLAGS.channels,
+                'n_seconds': n_seconds,
+                'sr': FLAGS.sampling_rate,
+                'label_map': label_map,
+            }, metadata)
     pool.close()
     env.close()
-
 
 if __name__ == '__main__':
     app.run(main)
