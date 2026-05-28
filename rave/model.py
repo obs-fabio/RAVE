@@ -98,7 +98,7 @@ class BetaWarmupCallback(pl.Callback):
 
         warmup_ratio = self.state["training_steps"] / self.warmup_len
 
-        if self.log_warmup: 
+        if self.log_warmup:
             beta = math.log(self.initial_value) * (1 - warmup_ratio) + math.log(
                 self.target_value) * warmup_ratio
             pl_module.beta_factor = math.exp(beta)
@@ -240,14 +240,14 @@ class RAVE(pl.LightningModule):
         x = self.spectrogram(x)[..., :-1]
         x = torch.log1p(x).reshape(*batch_size, -1, x.shape[-1])
         return x
-        
+
     def encode(self, x, return_mb: bool = False):
         x_enc = x
         if self.input_mode == "pqmf":
             x_enc = _pqmf_encode(self.pqmf, x_enc)
         elif self.input_mode == "mel":
             x_enc = self._mel_encode(x)
-            
+
         z = self.encoder(x_enc)
         if return_mb:
             if self.input_mode == "pqmf":
@@ -288,7 +288,8 @@ class RAVE(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         p = Profiler()
         gen_opt, dis_opt = self.optimizers()
-        x_raw = batch
+
+        x_raw, class_id = batch
         x_raw.requires_grad = True
 
         batch_size = x_raw.shape[:-2]
@@ -308,10 +309,10 @@ class RAVE(pl.LightningModule):
             y_multiband = y
             y_raw = _pqmf_decode(self.pqmf, y, batch_size=batch_size, n_channels=self.n_channels)
         else:
-            y_raw = y 
+            y_raw = y
             y_multiband = _pqmf_encode(self.pqmf, y)
 
-        # TODO this has been added for training with num_samples = 65536 samples, output padding seems to mess with output dimensions. 
+        # TODO this has been added for training with num_samples = 65536 samples, output padding seems to mess with output dimensions.
         # this may probably conflict with cached_conv
         y_raw = y_raw[..., :x_raw.shape[-1]]
         y_multiband = y_multiband[..., :x_multiband.shape[-1]]
@@ -423,7 +424,8 @@ class RAVE(pl.LightningModule):
         self.log_dict(loss_gen)
         p.tick('logging')
 
-    def validation_step(self, x, batch_idx):
+    def validation_step(self, batch, batch_idx):
+        x, _ = batch
 
         z = self.encode(x)
         if isinstance(self.encoder, blocks.VariationalEncoder):

@@ -47,7 +47,7 @@ class AudioDataset(data.Dataset):
     def __init__(self,
                  db_path: str,
                  audio_key: str = 'waveform',
-                 transforms: Optional[transforms.Transform] = None, 
+                 transforms: Optional[transforms.Transform] = None,
                  n_channels: int = 1) -> None:
         super().__init__()
         self._db_path = db_path
@@ -59,7 +59,7 @@ class AudioDataset(data.Dataset):
         lens = []
         with self.env.begin() as txn:
             for k in self.keys:
-               ae = AudioExample.FromString(txn.get(k)) 
+               ae = AudioExample.FromString(txn.get(k))
                lens.append(np.frombuffer(ae.buffers['waveform'].data, dtype=np.int16).shape)
 
 
@@ -80,7 +80,8 @@ class AudioDataset(data.Dataset):
         if self._transforms is not None:
             audio = self._transforms(audio)
 
-        return audio
+        class_id = int(ae.metadata["class_id"])
+        return audio, class_id
 
 
 class LazyAudioDataset(data.Dataset):
@@ -153,7 +154,8 @@ class LazyAudioDataset(data.Dataset):
         if self._transforms is not None:
             audio = self._transforms(audio)
 
-        return audio
+        class_id = int(ae.metadata["class_id"])
+        return audio, class_id
 
 def get_channels_from_dataset(db_path):
     with open(os.path.join(db_path, 'metadata.yaml'), 'r') as metadata:
@@ -210,7 +212,7 @@ def get_dataset(db_path,
                 derivative: bool = False,
                 normalize: bool = False,
                 rand_pitch: bool = False,
-                augmentations: Union[None, Iterable[Callable]] = None, 
+                augmentations: Union[None, Iterable[Callable]] = None,
                 n_channels: int = 1):
     if db_path[:4] == "http":
         return HTTPAudioDataset(db_path=db_path)
