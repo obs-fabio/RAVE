@@ -205,6 +205,12 @@ def normalize_signal(x: np.ndarray, max_gain_db: int = 30):
 
     return x * gain
 
+def get_num_classes(db_path):
+    with open(os.path.join(db_path, 'metadata.yaml'), 'r') as metadata:
+        metadata = yaml.safe_load(metadata)
+
+    return len(metadata["label_map"])
+
 @gin.configurable
 def get_dataset(db_path,
                 sr,

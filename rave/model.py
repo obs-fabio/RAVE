@@ -22,6 +22,7 @@ _default_loss_weights = {
     'multiband_audio_distance': 1.,
     'adversarial': 1.,
     'feature_matching' : 20,
+    'classification' : 1,
 }
 
 class Profiler:
@@ -162,7 +163,9 @@ class RAVE(pl.LightningModule):
         enable_pqmf_encode: Optional[bool] = None,
         enable_pqmf_decode: Optional[bool] = None,
         is_mel_input: Optional[bool] = None,
-        loss_weights = None
+        loss_weights = None,
+        n_classes: int = 0,
+        classifier_hidden_size: int = 64,
     ):
         super().__init__()
         self.pqmf = pqmf(n_channels=n_channels)
@@ -222,6 +225,18 @@ class RAVE(pl.LightningModule):
 
         self.register_buffer("receptive_field", torch.tensor([0, 0]).long())
         self.audio_monitor_epochs = audio_monitor_epochs
+
+        ## Classifier in latent space
+        self.n_classes = n_classes
+
+        if n_classes > 0 and classifier_hidden_size > 0 and self.weights['classification'] > 0:
+            self.classifier = nn.Sequential(
+                nn.Linear(latent_size, classifier_hidden_size),
+                nn.Linear(classifier_hidden_size, n_classes),
+            )
+            self.classification_loss = nn.CrossEntropyLoss()
+        else:
+            self.classifier = None
 
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
@@ -302,6 +317,26 @@ class RAVE(pl.LightningModule):
 
         z, reg = self.encoder.reparametrize(z)[:2]
         p.tick('encode')
+
+
+        if self.classifier is not None:
+
+            z_cls = z.permute(0, 2, 1)
+            logits = self.classifier(z_cls)
+
+            targets = class_id[:, None].expand(-1, logits.shape[1])
+
+            logits = logits.reshape(-1, self.n_classes)
+            targets = targets.reshape(-1)
+
+            classification_loss = self.classification_loss(
+                logits,
+                targets
+            )
+
+            acc = (logits.argmax(dim=1) == targets).float().mean()
+
+            self.log("cls_acc", acc)
 
         # DECODE LATENT
         y = self.decoder(z)
@@ -390,6 +425,9 @@ class RAVE(pl.LightningModule):
         loss_gen = {}
         loss_gen.update(distances)
         p.tick('update loss gen dict')
+
+        if self.classifier is not None:
+            loss_gen['classification'] = classification_loss
 
         if reg.item():
             loss_gen['regularization'] = reg * self.beta_factor
