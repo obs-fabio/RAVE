@@ -83,7 +83,7 @@ def fft_convolve(signal, kernel):
 
 def get_ckpts(folder, name=None):
     ckpts = map(str, Path(folder).rglob("*.ckpt"))
-    if name: 
+    if name:
         ckpts = filter(lambda e: mode in os.path.basename(str(e)), ckpts)
     ckpts = sorted(ckpts, key=os.path.getmtime)
     return ckpts
@@ -109,7 +109,7 @@ def search_for_config(folder):
     else:
         return None
 
-    
+
 
 def search_for_run(run_path, name=None):
     if run_path is None: return None
@@ -538,7 +538,7 @@ class LoggerCallback(pl.Callback):
 class ModelCheckpoint(pl.callbacks.ModelCheckpoint):
     def __init__(self, step_period: int = None, **kwargs):
         super().__init__(**kwargs)
-        self.step_period = step_period 
+        self.step_period = step_period
         self.__counter = 0
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):

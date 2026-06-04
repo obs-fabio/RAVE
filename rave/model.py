@@ -13,6 +13,7 @@ from pytorch_lightning.trainer.states import RunningStage
 
 
 import rave.core
+import rave.sonar_loss
 
 from . import blocks
 
@@ -22,7 +23,9 @@ _default_loss_weights = {
     'multiband_audio_distance': 1.,
     'adversarial': 1.,
     'feature_matching' : 20,
-    'classification' : 1,
+    'classification' : 1.,
+    'demon': 20.,
+    'lofar': 20.,
 }
 
 class Profiler:
@@ -238,6 +241,57 @@ class RAVE(pl.LightningModule):
         else:
             self.classifier = None
 
+        ## Lofar and demon losses
+        self.debug_stft_loss = None
+        self.debug_lofar_loss = None
+        self.debug_demon_loss = None
+        self.sonar_loss = None
+
+        if hasattr(self.audio_distance, "multiscale_stft"):
+            ms = self.audio_distance.multiscale_stft
+
+            print(type(ms))
+
+            if hasattr(ms, "scales"):
+
+                stft_configs = [
+                    rave.sonar_loss.STFTConfig(
+                        n_fft=scale,
+                        hop_length=scale // 4,
+                        temporal_mean=False,
+                    )
+                    for scale in ms.scales
+                ]
+
+                self.debug_stft_loss = rave.sonar_loss.MultiResolutionLoss[rave.sonar_loss.STFT](
+                    configs=stft_configs,
+                    compute_log=True,
+                )
+
+                self.debug_lofar_loss = rave.sonar_loss.MultiResolutionLoss[rave.sonar_loss.Lofar](
+                    configs=stft_configs,
+                    compute_log=False,
+                )
+
+                self.debug_demon_loss = rave.sonar_loss.MultiResolutionLoss[rave.sonar_loss.Demon](
+                    [
+                    rave.sonar_loss.DemonConfig(1024, 512, temporal_mean=False, decimate=[8, 8]),
+                    rave.sonar_loss.DemonConfig(2048, 1024, temporal_mean=False, decimate=[8, 8]),
+                    # rave.sonar_loss.DemonConfig(4096, 2048, temporal_mean=False, decimate=[8, 8]),
+                    ],
+                    compute_log=False
+                )
+
+                self.sonar_loss = rave.sonar_loss.SonarLoss(
+                    stft_factor=0,
+                    lofar_factor=self.weights['lofar'],
+                    demon_factor=self.weights['demon'],
+                    mel_factor=0,
+                    lofar_loss=self.debug_lofar_loss,
+                    demon_loss=self.debug_demon_loss
+                )
+
+
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
         gen_p += list(self.decoder.parameters())
@@ -376,6 +430,26 @@ class RAVE(pl.LightningModule):
         fullband_distance = self.audio_distance(x_raw, y_raw)
         p.tick('fb distance')
 
+        if self.debug_stft_loss is not None:
+            with torch.no_grad():
+                stft_loss = self.debug_stft_loss(x_raw, y_raw)
+                self.log("stft_loss", stft_loss)
+
+        if self.debug_lofar_loss is not None:
+            with torch.no_grad():
+                lofar_loss = self.debug_lofar_loss(x_raw, y_raw)
+                self.log("lofar_loss", lofar_loss)
+
+        if self.debug_lofar_loss is not None:
+            with torch.no_grad():
+                lofar_loss = self.debug_lofar_loss(x_raw, y_raw)
+                self.log("lofar_loss", lofar_loss)
+
+        if self.debug_demon_loss is not None:
+            with torch.no_grad():
+                demon_loss = self.debug_demon_loss(x_raw, y_raw)
+                self.log("demon_loss", demon_loss)
+
         for k, v in fullband_distance.items():
             distances[f'fullband_{k}'] = self.weights['audio_distance'] *  v
 
@@ -425,6 +499,12 @@ class RAVE(pl.LightningModule):
         loss_gen = {}
         loss_gen.update(distances)
         p.tick('update loss gen dict')
+
+
+        if self.sonar_loss is not None:
+            with torch.no_grad():
+                sonar_loss = self.sonar_loss(x_raw, y_raw)
+                loss_gen['sonar_loss'] = sonar_loss
 
         if self.classifier is not None:
             loss_gen['classification'] = classification_loss

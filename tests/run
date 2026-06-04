@@ -1,5 +1,7 @@
 #!/bin/bash
 
+#tensorboard --logdir . --port 8888 --bind_all
+
 # python scripts/train.py --config ./runs/configs/cls_0.gin --db_path ./runs/dataset/ --out_path ./runs/models/cls_0 --name cls_0 --gpu 0 --channels 1 --workers 1 --save_every 10000 --batch 32 --max_steps 30000
 # python scripts/train.py --config ./runs/configs/cls_1.gin --db_path ./runs/dataset/ --out_path ./runs/models/cls_1 --name cls_1 --gpu 0 --channels 1 --workers 1 --save_every 10000 --batch 32 --max_steps 30000
 # python scripts/train.py --config ./runs/configs/cls_10.gin --db_path ./runs/dataset/ --out_path ./runs/models/cls_10 --name cls_10 --gpu 0 --channels 1 --workers 1 --save_every 10000 --batch 32 --max_steps 30000
