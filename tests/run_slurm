@@ -1,0 +1,8 @@
+#!/bin/bash
+#SBATCH --job-name=acoustic_simulador
+#SBATCH --partition=gpu
+#SBATCH --output="$HOME/Documents/rave/train.log"
+
+export SLURM_NTASKS=${SLURM_NTASKS:-1}
+
+singularity exec --nv -H $HOME:$HOME $HOME/dockers/root_sonar.sif python $HOME/RAVE/tests/run_slurm.py
