@@ -263,7 +263,9 @@ class RAVE(pl.LightningModule):
         self.debug_demon_loss = None
         self.sonar_loss = None
 
-        if hasattr(self.audio_distance, "multiscale_stft"):
+        self.sonar_loss_factor = self.weights['lofar'] + self.weights['demon']
+
+        if hasattr(self.audio_distance, "multiscale_stft") and self.sonar_loss_factor != 0:
             ms = self.audio_distance.multiscale_stft
 
             print(type(ms))
