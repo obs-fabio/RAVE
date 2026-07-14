@@ -141,7 +141,8 @@ class STFT(AudioProcessor):
             hop_length=self.stft_config.hop_length,
             win_length=self.stft_config.n_fft,
             window=window,
-            return_complex=True
+            return_complex=True,
+            normalized=True
         )
 
         spec = torch.abs(ret)

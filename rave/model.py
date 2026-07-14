@@ -1,6 +1,6 @@
 import math
 from time import time
-from typing import Callable, Optional, Iterable, Dict
+from typing import Callable, Optional, Iterable, Dict, List
 
 import gin, pdb
 import numpy as np
@@ -23,9 +23,9 @@ _default_loss_weights = {
     'multiband_audio_distance': 1.,
     'adversarial': 1.,
     'feature_matching' : 20,
-    'classification' : 1.,
-    'demon': 20.,
-    'lofar': 20.,
+    'classification': 1.,
+    'demon': 0.,
+    'lofar': 0.,
 }
 
 class Profiler:
@@ -167,8 +167,9 @@ class RAVE(pl.LightningModule):
         enable_pqmf_decode: Optional[bool] = None,
         is_mel_input: Optional[bool] = None,
         loss_weights = None,
-        n_classes: int = 0,
-        classifier_hidden_size: int = 64,
+        n_classes: List[int] = [],
+        classification_weights: List[float] | float = [],
+        classifier_hidden_size: List[int] | int = [],
     ):
         super().__init__()
         self.pqmf = pqmf(n_channels=n_channels)
@@ -230,16 +231,31 @@ class RAVE(pl.LightningModule):
         self.audio_monitor_epochs = audio_monitor_epochs
 
         ## Classifier in latent space
-        self.n_classes = n_classes
+        self.classifiers = nn.ModuleDict()
+        self.classification_loss = nn.CrossEntropyLoss()
 
-        if n_classes > 0 and classifier_hidden_size > 0 and self.weights['classification'] > 0:
-            self.classifier = nn.Sequential(
-                nn.Linear(latent_size, classifier_hidden_size),
-                nn.Linear(classifier_hidden_size, n_classes),
+        classification_weights = classification_weights if isinstance(classification_weights, (list, tuple)) else [classification_weights] * len(n_classes)
+        classifier_hidden_size = classifier_hidden_size if isinstance(classifier_hidden_size, (list, tuple)) else [classifier_hidden_size] * len(n_classes)
+
+        assert (
+            len(n_classes)
+            == len(classification_weights)
+            == len(classifier_hidden_size)
+        )
+
+        for level, (n, w, h) in enumerate(
+                zip(n_classes, classification_weights, classifier_hidden_size)
+            ):
+            if w <= 0 or h <= 0:
+                continue
+
+            self.classifiers[str(level)] = nn.Sequential(
+                nn.Linear(latent_size, h),
+                nn.ReLU(),
+                nn.Linear(h, n),
             )
-            self.classification_loss = nn.CrossEntropyLoss()
-        else:
-            self.classifier = None
+
+        self.classification_weights = classification_weights
 
         ## Lofar and demon losses
         self.debug_stft_loss = None
@@ -358,7 +374,7 @@ class RAVE(pl.LightningModule):
         p = Profiler()
         gen_opt, dis_opt = self.optimizers()
 
-        x_raw, class_id = batch
+        x_raw, class_ids = batch
         x_raw.requires_grad = True
 
         batch_size = x_raw.shape[:-2]
@@ -372,25 +388,36 @@ class RAVE(pl.LightningModule):
         z, reg = self.encoder.reparametrize(z)[:2]
         p.tick('encode')
 
+        loss_cls = 0
+        weight_sum = 0
+        mean_acc = 0
 
-        if self.classifier is not None:
+        z_cls = z.permute(0, 2, 1)
 
-            z_cls = z.permute(0, 2, 1)
-            logits = self.classifier(z_cls)
+        for level_str, classifier in self.classifiers.items():
 
-            targets = class_id[:, None].expand(-1, logits.shape[1])
+            level = int(level_str)
 
-            logits = logits.reshape(-1, self.n_classes)
-            targets = targets.reshape(-1)
+            logits = classifier(z_cls)
 
-            classification_loss = self.classification_loss(
-                logits,
-                targets
-            )
+            target = class_ids[:, level]
+            target = target[:, None].expand(-1, logits.shape[1])
 
-            acc = (logits.argmax(dim=1) == targets).float().mean()
+            logits = logits.reshape(-1, logits.shape[-1])
+            target = target.reshape(-1)
 
-            self.log("cls_acc", acc)
+            loss = self.classification_loss(logits, target)
+
+            w = self.classification_weights[level]
+
+            loss_cls += w * loss
+            weight_sum += w
+
+            acc = (logits.argmax(1) == target).float().mean()
+
+            mean_acc += acc
+
+            self.log(f"cls_acc_{level}", acc)
 
         # DECODE LATENT
         y = self.decoder(z)
@@ -506,8 +533,13 @@ class RAVE(pl.LightningModule):
                 sonar_loss = self.sonar_loss(x_raw, y_raw)
                 loss_gen['sonar_loss'] = sonar_loss
 
-        if self.classifier is not None:
-            loss_gen['classification'] = classification_loss
+
+        if weight_sum > 0:
+            classification_loss = loss_cls / weight_sum
+            mean_acc /= len(self.classifiers)
+
+            self.log("cls_acc", mean_acc)
+            loss_gen["classification"] = classification_loss
 
         if reg.item():
             loss_gen['regularization'] = reg * self.beta_factor

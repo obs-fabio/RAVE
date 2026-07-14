@@ -6,7 +6,7 @@ import subprocess
 from datetime import timedelta
 from functools import partial
 from itertools import repeat
-from typing import Callable, Iterable, Sequence, Tuple
+from typing import Callable, Iterable, Sequence, Tuple, List
 
 import lmdb
 import numpy as np
@@ -57,12 +57,12 @@ def float_array_to_int16_bytes(x):
 def get_class_name(path: str) -> str:
     return pathlib.Path(path).parent.name
 
-def load_audio_chunk(data_config: Tuple[str, int],
+def load_audio_chunk(data_config: Tuple[str, List[int]],
                      n_signal: int,
                      sr: int,
-                     channels: int = 1) -> Iterable[Tuple[np.ndarray, int]]:
+                     channels: int = 1) -> Iterable[Tuple[np.ndarray, List[int]]]:
 
-    path, class_id = data_config
+    path, class_ids = data_config
 
     _, input_channels = get_audio_channels(path)
     channel_map = range(channels)
@@ -87,15 +87,15 @@ def load_audio_chunk(data_config: Tuple[str, int],
     while len(chunk[0]) == n_signal * 4:
         yield (
             b''.join(chunk),
-            class_id
+            class_ids
         )
         chunk = [p.stdout.read(n_signal * 4) for p in processes]
     process.stdout.close()
 
 
-def get_audio_length(data_config: Tuple[str, int]) -> float:
+def get_audio_length(data_config: Tuple[str, List[int]]) -> float:
 
-    path, class_id = data_config
+    path, class_ids = data_config
 
     process = subprocess.Popen(
         [
@@ -111,7 +111,7 @@ def get_audio_length(data_config: Tuple[str, int]) -> float:
         stdout = stdout.decode().split('\n')[1].split('=')[-1]
         length = float(stdout)
         _, channels = get_audio_channels(path)
-        return path, class_id, float(length), int(channels)
+        return path, class_ids, float(length), int(channels)
     except:
         return None
 
@@ -148,10 +148,10 @@ def get_metadata(audio_samples, channels: int = 1):
     return {'peak': peak_amplitude, 'rms_amplitude': rms_amplitude}
 
 
-def process_audio_array(audio: Tuple[int, Tuple[bytes, int]],
+def process_audio_array(audio: Tuple[int, Tuple[bytes, List[int]]],
                         env: lmdb.Environment,
                         channels: int = 1) -> int:
-    audio_id, (audio_samples, class_id) = audio
+    audio_id, (audio_samples, class_ids) = audio
     buffers = {}
     buffers['waveform'] = AudioExample.AudioBuffer(
         shape=(channels, int(len(audio_samples) / channels)),
@@ -163,7 +163,7 @@ def process_audio_array(audio: Tuple[int, Tuple[bytes, int]],
     ae = AudioExample(
         buffers=buffers,
         metadata={
-            "class_id": str(class_id)
+            "class_ids": ",".join(map(str, class_ids))
         }
     )
     key = f'{audio_id:08d}'
@@ -177,11 +177,11 @@ def process_audio_array(audio: Tuple[int, Tuple[bytes, int]],
 
 def process_audio_file(audio: Tuple[int, Tuple[str, int, float, int]],
                        env: lmdb.Environment) -> int:
-    audio_id, (path, class_id, length, channels) = audio
+    audio_id, (path, class_ids, length, channels) = audio
     ae = AudioExample(
         metadata={
             'path': path,
-            "class_id": str(class_id),
+            "class_ids": ",".join(map(str, class_ids)),
             'length': str(length),
             'channels': str(channels)
         })
@@ -230,6 +230,18 @@ def search_for_audios(path_list: Sequence[str], extensions: Sequence[str]):
     return audios
 
 
+def get_class_names(path, base_dirs):
+    p = pathlib.Path(path).resolve()
+
+    for base in base_dirs:
+        try:
+            rel = p.relative_to(base)
+            return rel.parts[:-1]
+        except ValueError:
+            pass
+
+    raise RuntimeError(f"{path} does not belong to any input_path")
+
 def main(argv):
     if FLAGS.lazy and os.name in ["nt", "posix"]:
         while (answer := input(
@@ -268,12 +280,26 @@ def main(argv):
 
     class_names = [pathlib.Path(p).parent.name for p in audios]
 
-    label_map = {
-        name: idx
-        for idx, name in enumerate(sorted(set(class_names)))
-    }
+    base_dirs = [pathlib.Path(x).resolve() for x in FLAGS.input_path]
 
-    class_ids = [label_map[name] for name in class_names]
+    class_lists = [get_class_names(p, base_dirs) for p in audios]
+
+    n_levels = max(len(x) for x in class_lists)
+
+    label_maps = []
+
+    for level in range(n_levels):
+        names = sorted(set(c[level] for c in class_lists))
+        label_maps.append({
+            name: idx
+            for idx, name in enumerate(names)
+        })
+
+    class_ids = [
+        [label_maps[level][name]
+        for level, name in enumerate(names)]
+        for names in class_lists
+    ]
 
     audios_config = list(zip(audios, class_ids))
 
@@ -319,7 +345,7 @@ def main(argv):
                 'channels': FLAGS.channels,
                 'n_seconds': n_seconds,
                 'sr': FLAGS.sampling_rate,
-                'label_map': label_map,
+                'label_maps': label_maps
             }, metadata)
     pool.close()
     env.close()

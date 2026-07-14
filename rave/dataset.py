@@ -80,8 +80,8 @@ class AudioDataset(data.Dataset):
         if self._transforms is not None:
             audio = self._transforms(audio)
 
-        class_id = int(ae.metadata["class_id"])
-        return audio, class_id
+        class_ids = list(map(int, ae.metadata["class_ids"].split(",")))
+        return audio, torch.tensor(class_ids)
 
 
 class LazyAudioDataset(data.Dataset):
@@ -154,8 +154,9 @@ class LazyAudioDataset(data.Dataset):
         if self._transforms is not None:
             audio = self._transforms(audio)
 
-        class_id = int(ae.metadata["class_id"])
-        return audio, class_id
+        class_ids = list(map(int, ae.metadata["class_ids"].split(",")))
+        return audio, torch.tensor(class_ids)
+
 
 def get_channels_from_dataset(db_path):
     with open(os.path.join(db_path, 'metadata.yaml'), 'r') as metadata:
@@ -209,7 +210,7 @@ def get_num_classes(db_path):
     with open(os.path.join(db_path, 'metadata.yaml'), 'r') as metadata:
         metadata = yaml.safe_load(metadata)
 
-    return len(metadata["label_map"])
+    return [len(label_map) for label_map in metadata["label_maps"]]
 
 @gin.configurable
 def get_dataset(db_path,
