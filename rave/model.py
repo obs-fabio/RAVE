@@ -249,9 +249,12 @@ class RAVE(pl.LightningModule):
             if w <= 0 or h <= 0:
                 continue
 
+            print("--"*40)
+            print(f"level[{level}], n[{n}], w[{w}], h[{h}]")
+            print("--"*40)
+
             self.classifiers[str(level)] = nn.Sequential(
                 nn.Linear(latent_size, h),
-                nn.ReLU(),
                 nn.Linear(h, n),
             )
 
@@ -313,6 +316,7 @@ class RAVE(pl.LightningModule):
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
         gen_p += list(self.decoder.parameters())
+        gen_p += list(self.classifiers.parameters())
         dis_p = list(self.discriminator.parameters())
 
         gen_opt = torch.optim.Adam(gen_p, 1e-3, (.5, .9))
@@ -537,11 +541,10 @@ class RAVE(pl.LightningModule):
 
 
         if weight_sum > 0:
-            classification_loss = loss_cls / weight_sum
             mean_acc /= len(self.classifiers)
 
             self.log("cls_acc", mean_acc)
-            loss_gen["classification"] = classification_loss
+            loss_gen["classification"] = loss_cls
 
         if reg.item():
             loss_gen['regularization'] = reg * self.beta_factor

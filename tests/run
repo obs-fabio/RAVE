@@ -6,13 +6,9 @@ python scripts/train.py --config ./configs/ch1.gin --db_path ./runs/dataset/ --o
 python scripts/train.py --config ./configs/ch5.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch5 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
 python scripts/train.py --config ./configs/ch10.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch10 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
 python scripts/train.py --config ./configs/ch50.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch50 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+python scripts/train.py --config ./configs/ch100.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch100 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
 
 python scripts/train.py --config ./configs/default.gin --db_path ./runs/dataset/ --out_path ./runs/models/default --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
-
-
-
-
-
 
 
 
