@@ -1,15 +1,25 @@
 #!/bin/bash
 
-python scripts/preprocess.py --input_path /data/iemanja/rave_trn --output_path ./runs/dataset --channels 1 --sampling_rate 16000 --ext wav
+python scripts/train.py --config ./configs/default.gin --db_path ./runs/dataset/ --out_path ./runs/models/default_gan --name iemenja --gpu 0 --channels 1 --save_every 55000 --batch 32 --max_steps 5500000 --ckpt ./runs/models/default_gan/iemenja_0da6fa64e5/version_3/checkpoints/epoch_385000.ckpt
 
-python scripts/train.py --config ./configs/ch1.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch1 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
-python scripts/train.py --config ./configs/ch5.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch5 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
-python scripts/train.py --config ./configs/ch10.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch10 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
-python scripts/train.py --config ./configs/ch50.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch50 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
-python scripts/train.py --config ./configs/ch100.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch100 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+# python scripts/preprocess.py --input_path /data/iemanja/rave_trn --output_path ./runs/dataset --channels 1 --sampling_rate 16000 --ext wav
 
-python scripts/train.py --config ./configs/default.gin --db_path ./runs/dataset/ --out_path ./runs/models/default --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+# python scripts/train.py --config ./configs/ch1.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch1 --name iemenja --gpu 1 --channels 1 --save_every 11000 --batch 32 --max_steps 550000
+# python scripts/train.py --config ./configs/ch5.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch5 --name iemenja --gpu 1 --channels 1 --save_every 11000 --batch 32 --max_steps 550000
+# python scripts/train.py --config ./configs/ch10.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch10 --name iemenja --gpu 1 --channels 1 --save_every 11000 --batch 32 --max_steps 550000
+# python scripts/train.py --config ./configs/ch50.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch50 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 550000
+# python scripts/train.py --config ./configs/ch100.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch100 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 550000
 
+# python scripts/train.py --config ./configs/ch5_s1.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch5_s1 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+# python scripts/train.py --config ./configs/ch10_s1.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch10_s1 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+# python scripts/train.py --config ./configs/ch10_s5.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch10_s5 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+# python scripts/train.py --config ./configs/ch10_s10.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch10_s5 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+# python scripts/train.py --config ./configs/ch100_s50.gin --db_path ./runs/dataset/ --out_path ./runs/models/ch100_s50 --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 55000
+
+# python scripts/train.py --config ./configs/default.gin --db_path ./runs/dataset/ --out_path ./runs/models/default --name iemenja --gpu 0 --channels 1 --save_every 11000 --batch 32 --max_steps 550000
+
+
+# python scripts/train.py --config ./configs/default.gin --db_path ./runs/dataset/ --out_path ./runs/models/default_gan --name iemenja --gpu 0 --channels 1 --save_every 55000 --batch 32 --max_steps 5500000 --ckpt ./runs/models/default/iemenja_491a994ad6/version_0/checkpoints/epoch_550000.ckpt
 
 
 # python scripts/preprocess.py --input_path /data/rave_trn --output_path ./runs/dataset --channels 1 --sampling_rate 16000 --ext wav

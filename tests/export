@@ -1,0 +1,42 @@
+#!/bin/bash
+
+ROOT="./runs/models"
+OUTPUT="./runs/exported_models"
+
+# EPOCHS=(5500 55000 550000)
+# ID_EPOCHS=(100 1000 10000)
+
+EPOCHS=(11000 22000 33000 44000 55000 110000 165000 220000 275000 330000 385000 440000 495000 550000)
+ID_EPOCHS=(200 400 600 800 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000)
+
+for RUN in "$ROOT"/*/*/; do
+    RUN=${RUN%/}
+    MODEL=$(basename "$(dirname "$RUN")")
+
+    for i in "${!EPOCHS[@]}"; do
+        EPOCH="${EPOCHS[$i]}"
+        ID="${ID_EPOCHS[$i]}"
+
+        NAME="${MODEL}_ep${ID}"
+        OUT_FILE="$OUTPUT/${NAME}.ts"
+
+        if [[ -f "$OUT_FILE" ]]; then
+            echo "Skipping $NAME (já exportado)"
+            continue
+        fi
+
+        CKPT=$(find "$RUN" -path "*/checkpoints/epoch_${EPOCH}*.ckpt" | head -n1)
+        if [[ -n "$CKPT" ]]; then
+
+            CMD="python scripts/export.py \
+                --run \"$CKPT\" \
+                --name \"$NAME\" \
+                --output \"$OUTPUT\" \
+                --fidelity 0.95"
+
+            echo "$CMD"
+            eval "$CMD"
+        fi
+
+    done
+done
