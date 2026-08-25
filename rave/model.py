@@ -26,6 +26,7 @@ _default_loss_weights = {
     'classification': 1.,
     'demon': 0.,
     'lofar': 0.,
+    'acgan_classification': 10.
 }
 
 class Profiler:
@@ -170,6 +171,7 @@ class RAVE(pl.LightningModule):
         n_classes: List[int] = [],
         classification_weights: List[float] | float = [],
         classifier_hidden_size: List[int] | int = [],
+        acgan : bool = False
     ):
         super().__init__()
         self.pqmf = pqmf(n_channels=n_channels)
@@ -232,11 +234,16 @@ class RAVE(pl.LightningModule):
 
         ## Classifier in latent space
         self.classifiers = nn.ModuleDict()
+        self.acgan_classifiers = nn.ModuleDict()
         self.classification_loss = nn.CrossEntropyLoss()
+        self.acgan = acgan
+
+        acgan_feature_dim = None
+        if acgan:
+            acgan_feature_dim = self._infer_acgan_feature_dim(n_channels)
 
         classification_weights = classification_weights if isinstance(classification_weights, (list, tuple)) else [classification_weights] * len(n_classes)
         classifier_hidden_size = classifier_hidden_size if isinstance(classifier_hidden_size, (list, tuple)) else [classifier_hidden_size] * len(n_classes)
-
         assert (
             len(n_classes)
             == len(classification_weights)
@@ -257,6 +264,14 @@ class RAVE(pl.LightningModule):
                 nn.Linear(latent_size, h),
                 nn.Linear(h, n),
             )
+
+            if acgan:
+                self.acgan_classifiers[str(level)] = nn.Sequential(
+                    nn.Linear(acgan_feature_dim, h),
+                    nn.ReLU(),
+                    nn.Linear(h, n),
+                )
+
 
         self.classification_weights = classification_weights
 
@@ -312,12 +327,23 @@ class RAVE(pl.LightningModule):
                     demon_loss=self.debug_demon_loss
                 )
 
+    def _infer_acgan_feature_dim(self, n_channels, dummy_length=131072):
+        was_training = self.discriminator.training
+        self.discriminator.eval()
+        with torch.no_grad():
+            dummy = torch.zeros(1, n_channels, dummy_length)
+            features = self.discriminator(dummy)
+            dim = sum(scale[-2].shape[1] for scale in features)
+        self.discriminator.train(was_training)
+        return dim
 
     def configure_optimizers(self):
         gen_p = list(self.encoder.parameters())
         gen_p += list(self.decoder.parameters())
         gen_p += list(self.classifiers.parameters())
+
         dis_p = list(self.discriminator.parameters())
+        dis_p += list(self.acgan_classifiers.parameters())
 
         gen_opt = torch.optim.Adam(gen_p, 1e-3, (.5, .9))
         dis_opt = torch.optim.Adam(dis_p, 1e-4, (.5, .9))
@@ -500,6 +526,9 @@ class RAVE(pl.LightningModule):
             pred_real = 0
             pred_fake = 0
 
+            acgan_features_real = []
+            acgan_features_fake = []
+
             for scale_real, scale_fake in zip(feature_real, feature_fake):
                 current_feature_distance = sum(
                     map(
@@ -518,14 +547,65 @@ class RAVE(pl.LightningModule):
                 loss_dis = loss_dis + _dis
                 loss_adv = loss_adv + _adv
 
+                if self.acgan:
+                    acgan_features_real.append(scale_real[-2].mean(dim=-1))
+                    acgan_features_fake.append(scale_fake[-2].mean(dim=-1))
+
             feature_matching_distance = feature_matching_distance / len(
                 feature_real)
+
+            loss_acgan_real = 0.
+            loss_acgan_fake = 0.
+
+            if self.acgan:
+
+                mean_acgan_acc_real = 0
+                mean_acgan_acc_fake = 0
+
+                acgan_features_real = torch.cat(acgan_features_real, dim=1)
+                acgan_features_fake = torch.cat(acgan_features_fake, dim=1)
+
+                # [B, 512 + 256 + 128] = [B, 896]
+                for level_str, classifier in self.acgan_classifiers.items():
+
+                    level = int(level_str)
+                    target = class_ids[:, level]
+
+                    logits_real = classifier(acgan_features_real)
+                    logits_fake = classifier(acgan_features_fake)
+
+                    loss_real = self.classification_loss(logits_real, target)
+                    loss_fake = self.classification_loss(logits_fake, target)
+
+                    w = self.classification_weights[level]
+
+                    loss_acgan_real += w * loss_real
+                    loss_acgan_fake += w * loss_fake
+
+                    self.log(f"acgan_loss_real_{level}", loss_real)
+                    self.log(f"acgan_loss_fake_{level}", loss_fake)
+
+                    acc_real = (logits_real.argmax(1) == target).float().mean()
+                    acc_fake = (logits_fake.argmax(1) == target).float().mean()
+
+                    self.log(f"acgan_acc_real_{level}", acc_real)
+                    self.log(f"acgan_acc_fake_{level}", acc_fake)
+
+                    mean_acgan_acc_real += acc_real
+                    mean_acgan_acc_fake += acc_fake
+
+                n_acgan = len(self.acgan_classifiers)
+                if n_acgan > 0:
+                    self.log("acgan_acc_real", mean_acgan_acc_real / n_acgan)
+                    self.log("acgan_acc_fake", mean_acgan_acc_fake / n_acgan)
 
         else:
             pred_real = torch.tensor(0.).to(x_raw)
             pred_fake = torch.tensor(0.).to(x_raw)
             loss_dis = torch.tensor(0.).to(x_raw)
             loss_adv = torch.tensor(0.).to(x_raw)
+            loss_acgan_real = torch.tensor(0.).to(x_raw)
+            loss_acgan_fake = torch.tensor(0.).to(x_raw)
         p.tick('discrimination')
 
         # COMPOSE GEN LOSS
@@ -553,10 +633,17 @@ class RAVE(pl.LightningModule):
             loss_gen['feature_matching'] = self.weights['feature_matching'] * feature_matching_distance
             loss_gen['adversarial'] = self.weights['adversarial'] * loss_adv
 
+            if self.acgan:
+                loss_gen['acgan_classification'] = loss_acgan_fake * self.weights['acgan_classification']
+
         # OPTIMIZATION
         if not (batch_idx %
                 self.update_discriminator_every) and self.warmed_up:
             dis_opt.zero_grad()
+
+            if self.acgan:
+                loss_dis = loss_dis + loss_acgan_real + loss_acgan_fake
+
             loss_dis.backward()
             dis_opt.step()
             p.tick('dis opt')
